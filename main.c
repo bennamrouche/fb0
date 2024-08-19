@@ -14,10 +14,10 @@
 
 // Function to handle the incoming frame data and write it to the framebuffer
 void write_frame_to_fb(unsigned char *frame_data, size_t frame_size, unsigned char *framebuffer, size_t screensize) {
-    if (frame_size != screensize) {
-        fprintf(stderr, "Frame size does not match framebuffer size.\n");
-        return;
-    }
+    // if (frame_size != screensize) {
+    //     fprintf(stderr, "Frame size does not match framebuffer size.\n");
+    //     return;
+    // }
     memcpy(framebuffer, frame_data, frame_size);
 }
 
