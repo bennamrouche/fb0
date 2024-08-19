@@ -6,18 +6,19 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
-#include <time.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 
 #define FB_PATH "/dev/fb0"
+#define PORT 8000
 
-// Function to create a color buffer with a given color
-void create_color_buffer(unsigned char *buffer, int r, int g, int b, int width, int height, int bpp) {
-    size_t buffer_size = width * height * bpp;
-    for (size_t i = 0; i < buffer_size; i += bpp) {
-        buffer[i] = r;   // Red
-        buffer[i + 1] = g; // Green
-        buffer[i + 2] = b; // Blue
+// Function to handle the incoming frame data and write it to the framebuffer
+void write_frame_to_fb(unsigned char *frame_data, size_t frame_size, unsigned char *framebuffer, size_t screensize) {
+    if (frame_size != screensize) {
+        fprintf(stderr, "Frame size does not match framebuffer size.\n");
+        return;
     }
+    memcpy(framebuffer, frame_data, frame_size);
 }
 
 int main() {
@@ -50,35 +51,77 @@ int main() {
         return 1;
     }
 
-    unsigned char *color_buffer = (unsigned char *)malloc(screensize);
-    if (!color_buffer) {
-        perror("Error allocating memory for color buffer");
+    // Set up the server
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) {
+        perror("Error creating socket");
         munmap(framebuffer, screensize);
         close(fb);
         return 1;
     }
 
-    // Seed the random number generator
-    srand(time(NULL));
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(PORT);
+
+    if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Error binding socket");
+        close(server_fd);
+        munmap(framebuffer, screensize);
+        close(fb);
+        return 1;
+    }
+
+    if (listen(server_fd, 1) < 0) {
+        perror("Error listening on socket");
+        close(server_fd);
+        munmap(framebuffer, screensize);
+        close(fb);
+        return 1;
+    }
+
+    printf("Server listening on port %d...\n", PORT);
+
+    // Buffer for receiving data
+    unsigned char *frame_data = (unsigned char *)malloc(screensize);
+    if (!frame_data) {
+        perror("Error allocating memory for frame data");
+        close(server_fd);
+        munmap(framebuffer, screensize);
+        close(fb);
+        return 1;
+    }
 
     // Main loop
     while (1) {
-        // Generate random colors for each frame
-        int r = rand() % 256; // Random red component (0-255)
-        int g = rand() % 256; // Random green component (0-255)
-        int b = rand() % 256; // Random blue component (0-255)
+        // Accept incoming connections
+        int client_fd = accept(server_fd, NULL, NULL);
+        if (client_fd < 0) {
+            perror("Error accepting connection");
+            continue; // Continue to the next iteration of the loop
+        }
 
-        create_color_buffer(color_buffer, r, g, b, width, height, bpp);
+        printf("Client connected.\n");
 
-        // Write color buffer to framebuffer
-        memcpy(framebuffer, color_buffer, screensize);
+        // Receive and display frames
+        ssize_t bytes_received;
+        while ((bytes_received = recv(client_fd, frame_data, screensize, 0)) > 0) {
+            write_frame_to_fb(frame_data, bytes_received, framebuffer, screensize);
+        }
 
-        // Sleep for 40 milliseconds
-        usleep(40000);
+        if (bytes_received < 0) {
+            perror("Error receiving data");
+        }
+
+        printf("Client disconnected.\n");
+        close(client_fd);
     }
 
     // Cleanup
-    free(color_buffer);
+    free(frame_data);
+    close(server_fd);
     munmap(framebuffer, screensize);
     close(fb);
     return 0;
